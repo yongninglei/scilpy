@@ -28,6 +28,7 @@ import logging
 import multiprocessing
 import os
 import shutil
+import uuid
 
 from dipy.io.stateful_tractogram import StatefulTractogram
 from dipy.io.streamline import load_tractogram, save_tractogram
@@ -91,7 +92,7 @@ def _build_arg_parser():
     return p
 
 
-def load_data_tmp_saving(args):
+def load_data_tmp_saving(args, tmp_dir):
     filename = args[0]
     reference = args[1]
     init_only = args[2]
@@ -101,12 +102,12 @@ def load_data_tmp_saving(args):
     # that can be computed once is saved temporarily and simply loaded on
     # demand
     hash_tmp = hashlib.md5(filename.encode()).hexdigest()
-    tmp_density_filename = os.path.join('tmp_measures/',
+    tmp_density_filename = os.path.join(f'{tmp_dir}/',
                                         '{}_density.nii.gz'.format(hash_tmp))
-    tmp_endpoints_filename = os.path.join('tmp_measures/',
+    tmp_endpoints_filename = os.path.join(f'{tmp_dir}/',
                                           '{}_endpoints.nii.gz'.format(
                                               hash_tmp))
-    tmp_centroids_filename = os.path.join('tmp_measures/',
+    tmp_centroids_filename = os.path.join(f'{tmp_dir}/',
                                           '{}_centroids.trk'.format(hash_tmp))
 
     sft = load_tractogram(filename, reference)
@@ -157,7 +158,7 @@ def load_data_tmp_saving(args):
     return density, endpoints_density, streamlines, centroids
 
 
-def compute_all_measures(args):
+def compute_all_measures(args, tmp_dir):
     tuple_1, tuple_2 = args[0]
     filename_1, reference_1 = tuple_1
     filename_2, reference_2 = tuple_2
@@ -167,7 +168,7 @@ def compute_all_measures(args):
     ratio = args[4]
 
     data_tuple_1 = load_data_tmp_saving([filename_1, reference_1, False,
-                                         disable_streamline_distance])
+                                         disable_streamline_distance], tmp_dir)
     if data_tuple_1 is None:
         return None
 
@@ -175,7 +176,7 @@ def compute_all_measures(args):
         centroids_1 = data_tuple_1
 
     data_tuple_2 = load_data_tmp_saving([filename_2, reference_2, False,
-                                         disable_streamline_distance])
+                                         disable_streamline_distance], tmp_dir)
     if data_tuple_2 is None:
         return None
 
@@ -209,11 +210,15 @@ def main():
         parser.error('Can only compute ratio if also using `single_compare`')
 
     nbr_cpu = validate_nbr_processes(parser, args)
+    # print(validate_nbr_processes(parser, args))
+    # print(f"### this is the parser: -- {parser}\n")
+    # print(f"### this is the args: -- {args}\n ")
     if nbr_cpu > 1:
         pool = multiprocessing.Pool(nbr_cpu)
 
-    if not os.path.isdir('tmp_measures/'):
-        os.mkdir('tmp_measures/')
+    tmp_dir = f'tmp_measures_{uuid.uuid4().hex[:8]}/'
+    if not os.path.isdir(tmp_dir):
+        os.mkdir(tmp_dir)
 
     if args.single_compare:
         # Move the single_compare only once, at the end.
@@ -240,13 +245,13 @@ def main():
             for i in range(len(bundles_references_tuple)):
                 load_data_tmp_saving([bundles_references_tuple[i][0],
                                       bundles_references_tuple[i][1],
-                                      True, args.disable_streamline_distance])
+                                      True, args.disable_streamline_distance], tmp_dir)
         else:
             pool.map(load_data_tmp_saving,
                      zip([tup[0] for tup in bundles_references_tuple],
                          [tup[1] for tup in bundles_references_tuple],
                          itertools.repeat(True),
-                         itertools.repeat(args.disable_streamline_distance)))
+                         itertools.repeat(args.disable_streamline_distance)),tmp_dir)
 
         comb_dict_keys = list(itertools.combinations(
             bundles_references_tuple, r=2))
@@ -258,7 +263,7 @@ def main():
                 curr_tuple, args.streamline_dice,
                 args.ignore_zeros_in_BA,
                 args.disable_streamline_distance,
-                args.ratio]))
+                args.ratio],tmp_dir))
     else:
         all_measures_dict = pool.map(
             compute_all_measures,
@@ -286,7 +291,7 @@ def main():
                   indent=args.indent, sort_keys=args.sort_keys)
 
     if not args.keep_tmp:
-        shutil.rmtree('tmp_measures/')
+        shutil.rmtree(tmp_dir)
 
 
 if __name__ == "__main__":
